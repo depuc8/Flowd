@@ -1,0 +1,21 @@
+# Build trees and locally built dependencies
+/build/
+/build-*/
+/.deps/
+/.cache/
+compile_commands.json
+
+# DynamoDB Local runtime files
+/.dynamodb-local/
+*.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local configuration and credentials
+.env
+*.pem
+*.key
