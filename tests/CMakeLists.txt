@@ -4,6 +4,8 @@ add_executable(flowd_unit_tests
     unit/task_state_test.cpp
     unit/retry_policy_test.cpp
     unit/workflow_test.cpp
+    unit/lockfree_queue_test.cpp
+    unit/thread_pool_test.cpp
 )
 target_link_libraries(flowd_unit_tests PRIVATE flowd::core GTest::gtest_main GTest::gmock)
 gtest_discover_tests(flowd_unit_tests
