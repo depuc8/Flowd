@@ -25,6 +25,7 @@ include(FlowdOptions)
 include(FlowdDependencies)
 
 add_subdirectory(src)
+add_subdirectory(apps)
 
 if(FLOWD_BUILD_TESTS)
     enable_testing()
