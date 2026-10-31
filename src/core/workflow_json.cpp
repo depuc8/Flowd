@@ -83,9 +83,9 @@ WorkflowSpec parse_workflow_json(std::string_view text) {
         throw ValidationError("workflow: 'tasks' must be an array");
     }
     spec.tasks.reserve(tasks->size());
-    for (std::size_t i = 0; i < tasks->size(); ++i) {
-        const json& node = (*tasks)[i];
-        const std::string where = "tasks[" + std::to_string(i) + "]";
+    std::size_t i = 0;
+    for (const json& node : *tasks) {
+        const std::string where = "tasks[" + std::to_string(i++) + "]";
         if (!node.is_object()) {
             throw ValidationError(where + " must be an object");
         }

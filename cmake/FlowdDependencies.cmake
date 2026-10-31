@@ -8,7 +8,8 @@ find_package(nlohmann_json 3.11 QUIET)
 if(NOT nlohmann_json_FOUND)
     FetchContent_Declare(nlohmann_json
         URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SYSTEM)
     FetchContent_MakeAvailable(nlohmann_json)
 endif()
 
@@ -19,7 +20,8 @@ if(FLOWD_BUILD_TESTS)
         set(BUILD_GMOCK ON CACHE BOOL "" FORCE)
         FetchContent_Declare(googletest
             URL https://github.com/google/googletest/releases/download/v1.17.0/googletest-1.17.0.tar.gz
-            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SYSTEM)
         FetchContent_MakeAvailable(googletest)
     endif()
 endif()
