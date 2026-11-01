@@ -52,10 +52,10 @@ double DagExecutor::next_random() {
     // splitmix64 over an atomic counter: cheap, thread-safe and good enough
     // for spreading out retries.
     std::uint64_t z = rng_state_.fetch_add(0x9e3779b97f4a7c15ULL, std::memory_order_relaxed);
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    z ^= z >> 31;
-    return static_cast<double>(z >> 11) * 0x1.0p-53;
+    z = (z ^ (z >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27U)) * 0x94d049bb133111ebULL;
+    z ^= z >> 31U;
+    return static_cast<double>(z >> 11U) * 0x1.0p-53;
 }
 
 std::future<WorkflowResult> DagExecutor::start(std::shared_ptr<const Dag> dag,

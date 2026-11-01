@@ -1,13 +1,12 @@
+#include "flowd/core/sleep.hpp"
 #include "flowd/engine/handler.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
 #include <chrono>
-#include <condition_variable>
 #include <csignal>
-#include <cstring>
-#include <mutex>
+#include <system_error>
 #include <string>
 #include <thread>
 #include <vector>
@@ -26,7 +25,7 @@ namespace {
 using nlohmann::json;
 using Clock = std::chrono::steady_clock;
 
-constexpr std::size_t kMaxCapturedOutput = 64 * 1024;
+constexpr std::size_t kMaxCapturedOutput = std::size_t{64} * 1024;
 
 json parse_payload(const TaskContext& ctx) {
     if (ctx.payload.empty()) {
@@ -37,16 +36,6 @@ json parse_payload(const TaskContext& ctx) {
         throw std::invalid_argument("payload is not valid JSON");
     }
     return doc;
-}
-
-// Sleeps for `d` unless stop is requested first. Returns false if stopped.
-bool interruptible_sleep(std::chrono::milliseconds d, const std::stop_token& stop) {
-    std::mutex m;
-    std::condition_variable_any cv;
-    std::unique_lock lock(m);
-    // The predicate never becomes true, so this returns on timeout or stop.
-    (void)cv.wait_for(lock, stop, d, [] { return false; });
-    return !stop.stop_requested();
 }
 
 TaskResult sleep_handler(const TaskContext& ctx) {
@@ -82,7 +71,7 @@ class Pipe {
 public:
     Pipe() {
         if (::pipe2(fds_, O_CLOEXEC) != 0) {
-            throw std::runtime_error(std::string("pipe2: ") + std::strerror(errno));
+            throw std::system_error(errno, std::system_category(), "pipe2");
         }
     }
     Pipe(const Pipe&) = delete;
@@ -160,7 +149,7 @@ TaskResult shell_handler(const TaskContext& ctx) {
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
     if (rc != 0) {
-        return TaskResult::failure(std::string("posix_spawn failed: ") + std::strerror(rc));
+        return TaskResult::failure("posix_spawn failed: " + std::system_category().message(rc));
     }
     out.close_write();
 

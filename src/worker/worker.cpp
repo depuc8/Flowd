@@ -1,6 +1,7 @@
 #include "flowd/worker/worker.hpp"
 
 #include "flowd/core/log.hpp"
+#include "flowd/core/sleep.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,7 +18,7 @@ using SteadyClock = std::chrono::steady_clock;
 
 std::uint64_t random_seed() {
     std::random_device rd;
-    return (static_cast<std::uint64_t>(rd()) << 32) ^ rd();
+    return (static_cast<std::uint64_t>(rd()) << 32U) ^ rd();
 }
 
 } // namespace
@@ -59,9 +60,9 @@ void Worker::start() {
         return;
     }
     pool_ = std::make_unique<concurrency::ThreadPool>(options_.threads);
-    poller_ = std::jthread([this](std::stop_token s) { poll_loop(std::move(s)); });
-    heartbeat_ = std::jthread([this](std::stop_token s) { heartbeat_loop(std::move(s)); });
-    maintenance_ = std::jthread([this](std::stop_token s) { maintenance_loop(std::move(s)); });
+    poller_ = std::jthread([this](const std::stop_token& s) { poll_loop(s); });
+    heartbeat_ = std::jthread([this](const std::stop_token& s) { heartbeat_loop(s); });
+    maintenance_ = std::jthread([this](const std::stop_token& s) { maintenance_loop(s); });
     log::info("worker {} started: threads={} max_in_flight={} lease={}ms heartbeat={}ms",
               options_.worker_id, options_.threads, options_.max_in_flight,
               options_.lease_duration.count(), options_.heartbeat_interval.count());
@@ -151,16 +152,9 @@ void Worker::count_store_error(std::string_view what, const std::exception& e) {
     log::warn("worker {}: {} failed: {}", options_.worker_id, what, e.what());
 }
 
-void Worker::interruptible_wait(std::stop_token& stop, std::chrono::milliseconds d) {
-    std::mutex m;
-    std::condition_variable_any cv;
-    std::unique_lock lock(m);
-    (void)cv.wait_for(lock, stop, d, [] { return false; });
-}
-
 // ---- claiming ---------------------------------------------------------------
 
-void Worker::poll_loop(std::stop_token stop) {
+void Worker::poll_loop(const std::stop_token& stop) {
     const std::uint32_t shards = std::max<std::uint32_t>(1, store_.shard_count());
     std::uint32_t next_shard = 0;
     {
@@ -187,7 +181,7 @@ void Worker::poll_loop(std::stop_token stop) {
         next_shard = (next_shard + 1) % shards;
 
         if (claimed == 0) {
-            interruptible_wait(stop, backoff);
+            (void)interruptible_sleep(backoff, stop);
             backoff = std::min(backoff * 2, options_.max_poll_interval);
         } else {
             backoff = options_.min_poll_interval;
@@ -243,23 +237,20 @@ std::size_t Worker::claim_from(std::uint32_t shard, std::size_t capacity) {
 
 FailureTransition Worker::failure_transition(const TaskRecord& record, bool retryable,
                                              std::string error) {
-    const TimestampMs now = clock_.now_ms();
+    FailureTransition t{.next = TaskState::Failed, .error = std::move(error), .now = clock_.now_ms()};
     if (retryable && record.retry.can_retry(record.attempt)) {
         double r = 0.0;
         {
             std::lock_guard lock(mutex_);
             r = std::uniform_real_distribution<double>(0.0, 1.0)(rng_);
         }
-        const auto delay = record.retry.backoff(record.attempt, r);
-        return FailureTransition{.next = TaskState::Retrying,
-                                 .available_at = now + delay.count(),
-                                 .error = std::move(error),
-                                 .now = now};
+        t.next = TaskState::Retrying;
+        t.available_at = t.now + record.retry.backoff(record.attempt, r).count();
     }
-    return FailureTransition{.next = TaskState::Failed, .error = std::move(error), .now = now};
+    return t;
 }
 
-void Worker::execute(std::shared_ptr<InFlight> task) {
+void Worker::execute(const std::shared_ptr<InFlight>& task) {
     const TaskRecord& r = task->record;
     const TaskKey key = r.key();
 
@@ -389,11 +380,11 @@ void Worker::propagate_failure(const TaskRecord& record) {
 
 // ---- heartbeats and timeouts --------------------------------------------------
 
-void Worker::heartbeat_loop(std::stop_token stop) {
+void Worker::heartbeat_loop(const std::stop_token& stop) {
     const auto tick = std::clamp(options_.heartbeat_interval / 4, std::chrono::milliseconds{5},
                                  std::chrono::milliseconds{250});
     while (!stop.stop_requested()) {
-        interruptible_wait(stop, tick);
+        (void)interruptible_sleep(tick, stop);
         if (stop.stop_requested() || !should_write()) {
             break;
         }
@@ -443,9 +434,9 @@ void Worker::heartbeat_loop(std::stop_token stop) {
 
 // ---- crash recovery -----------------------------------------------------------
 
-void Worker::maintenance_loop(std::stop_token stop) {
+void Worker::maintenance_loop(const std::stop_token& stop) {
     while (!stop.stop_requested()) {
-        interruptible_wait(stop, options_.maintenance_interval);
+        (void)interruptible_sleep(options_.maintenance_interval, stop);
         if (stop.stop_requested() || !should_write()) {
             break;
         }

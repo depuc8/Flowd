@@ -110,10 +110,10 @@ private:
         std::chrono::steady_clock::time_point next_renewal{};
     };
 
-    void poll_loop(std::stop_token stop);
-    void heartbeat_loop(std::stop_token stop);
-    void maintenance_loop(std::stop_token stop);
-    void execute(std::shared_ptr<InFlight> task);
+    void poll_loop(const std::stop_token& stop);
+    void heartbeat_loop(const std::stop_token& stop);
+    void maintenance_loop(const std::stop_token& stop);
+    void execute(const std::shared_ptr<InFlight>& task);
     std::size_t claim_from(std::uint32_t shard, std::size_t capacity);
 
     void reap_expired_leases();
@@ -127,7 +127,6 @@ private:
     TimestampMs lease_deadline() const;
     void count_store_error(std::string_view what, const std::exception& e);
     bool should_write() const noexcept { return !killed_.load(std::memory_order_acquire); }
-    void interruptible_wait(std::stop_token& stop, std::chrono::milliseconds d);
 
     TaskStore& store_;
     const HandlerRegistry& handlers_;

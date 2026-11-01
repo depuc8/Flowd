@@ -43,8 +43,8 @@ public:
 
 private:
     struct Entry {
-        TimePoint when;
-        TimerId id;
+        TimePoint when{};
+        TimerId id = 0;
         // mutable so the callback can be moved out of the priority queue's top().
         mutable Callback cb;
         bool operator>(const Entry& o) const { return when != o.when ? when > o.when : id > o.id; }

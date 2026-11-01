@@ -45,6 +45,7 @@ double seconds_since(Clock::time_point start) {
 // Median of `reps` runs of `f`, which returns elapsed seconds.
 double median_of(int reps, const std::function<double()>& f) {
     std::vector<double> v;
+    v.reserve(static_cast<std::size_t>(reps));
     for (int i = 0; i < reps; ++i) {
         v.push_back(f());
     }
@@ -94,6 +95,7 @@ double queue_run(int producers, int consumers, std::uint64_t total) {
     std::atomic<std::uint64_t> consumed{0};
     std::barrier sync(producers + consumers + 1);
     std::vector<std::thread> threads;
+    threads.reserve(static_cast<std::size_t>(producers) + static_cast<std::size_t>(consumers));
     for (int p = 0; p < producers; ++p) {
         threads.emplace_back([&] {
             sync.arrive_and_wait();
@@ -149,6 +151,7 @@ void bench_pool(bool quick) {
             concurrency::ThreadPool pool(threads);
             const auto start = Clock::now();
             std::vector<std::thread> producers;
+            producers.reserve(4);
             for (int p = 0; p < 4; ++p) {
                 producers.emplace_back([&] {
                     for (int i = 0; i < jobs / 4; ++i) {
