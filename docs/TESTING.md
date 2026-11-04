@@ -10,10 +10,10 @@ jobs on every push (see `.github/workflows/ci.yml`).
 
 | Suite | Binary / script | What it covers |
 |---|---|---|
-| Unit | `flowd_unit_tests` (80 tests) | State machine table, retry/backoff, DAG validation and cycle detection, JSON parsing, lock-free queue (FIFO, move-only, MPMC exactly-once, reclamation), thread pool (drain, shutdown, exceptions, recursive submission, lost wake-ups), built-in handlers (shell output, exit codes, timeouts killing process trees, cancellation), timer service, in-process DAG executor (diamond order, retries, timeouts, failure propagation, 10k-task DAG, concurrent workflows) |
+| Unit | `flowd_unit_tests` (81 tests) | State machine table, retry/backoff, DAG validation and cycle detection, JSON parsing, lock-free queue (FIFO, move-only, MPMC exactly-once, reclamation), thread pool (drain, shutdown, exceptions, recursive submission, lost wake-ups), built-in handlers (shell output, exit codes, timeouts killing process trees, cancellation), timer service, in-process DAG executor (diamond order, retries, timeouts, failure propagation, 10k-task DAG, concurrent workflows) |
 | Store contract | `tests/common/task_store_contract.cpp` | 12 tests of the `TaskStore` semantics: exclusive claims (16 racing threads, exactly one winner), fencing of renew/complete/fail by owner and attempt, backoff visibility, lease expiry and stale-owner rejection, idempotent dependency resolution (16 concurrent resolvers release a child exactly once), upstream failure, propagation index |
-| Worker scenarios | `tests/common/worker_scenarios.cpp` | 11 end-to-end scenarios with real `Worker` instances: dependency order, 5 workers with no duplicate execution, retry backoff timing, failure propagation, crashed worker recovery, zombie worker fencing, commit failure recovery, propagation repair after a crash, attempt limit for crash-looping tasks, graceful drain, 5,000 tasks across 4 workers |
-| Integration | `flowd_integration_tests` (38 tests) | The contract suite and worker scenarios against DynamoDB Local (scratch table per test), plus batched creation of a 260-task workflow |
+| Worker scenarios | `tests/common/worker_scenarios.cpp` | 12 end-to-end scenarios with real `Worker` instances: dependency order, 5 workers with no duplicate execution, retry backoff timing, failure propagation, crashed worker recovery, a crash in the middle of a claim, zombie worker fencing, commit failure recovery, propagation repair after a crash, attempt limit for crash-looping tasks, graceful drain, 5,000 tasks across 4 workers |
+| Integration | `flowd_integration_tests` (39 tests) | The contract suite and worker scenarios against DynamoDB Local (scratch table per test), plus batched creation of a 260-task workflow |
 | Multi-process crash | `tests/integration/crash_recovery.sh` | 3 `flowd worker` processes; one is `SIGKILL`ed while holding leases; survivors must reap, re-execute and finish a 60-task workflow, then exit cleanly on SIGTERM |
 
 The contract suite and the scenarios are written once and instantiated per
@@ -46,13 +46,14 @@ tests/integration/crash_recovery.sh build/dynamodb-debug/apps/flowd
 
 | Configuration | Result |
 |---|---|
-| GCC 16 Debug (`-Werror`) | 80/80 passed |
-| GCC 16 Release (`-Werror`) | 80/80 passed |
-| Clang 22 ThreadSanitizer | 80/80 passed, 0 TSan reports |
-| Clang 22 AddressSanitizer + UBSan (leak detection on) | 80/80 passed, 0 reports |
+| GCC 16 Debug (`-Werror`) | 81/81 passed |
+| GCC 16 Release (`-Werror`) | 80/80 passed (before the kill() regression test was added) |
+| Clang 22 ThreadSanitizer | 81/81 passed, 0 TSan reports |
+| Clang 22 AddressSanitizer + UBSan (leak detection on) | 81/81 passed, 0 reports |
 | TSan stress: 55 concurrent tests x 20 repetitions | 20/20 runs passed, 0 TSan reports |
+| TSan and ASan stress pinned to 2 CPUs (`taskset -c 0,1`): 56 tests x 10 repetitions each | 10/10 + 10/10 passed, 0 reports |
 | Debug repeat of worker scenarios x 25 | 25/25 passed |
-| DynamoDB build, all tests with DynamoDB Local | 118/118 passed (80 unit + 38 integration incl. crash script) |
+| DynamoDB build, all tests with DynamoDB Local | 120/120 passed (81 unit + 39 integration incl. crash script) |
 | Integration suite x 3 repetitions | 3/3 passed (37 tests each) |
 | `crash_recovery.sh` x 4 runs | 4/4 PASS; each run re-executed the 4 tasks the killed worker was holding |
 | clang-tidy 23 (`.clang-tidy` checks) on `src/ apps/ benchmarks/` | 0 findings |
@@ -104,6 +105,16 @@ The worker's concurrency logic is identical across stores and is covered
 under TSan through the in-memory store.
 
 ## Bugs found by the tests
+
+- **Deadlock in `Worker::kill()`** (found by CI: the ASan stress step hung
+  in `CrashedWorkersLeaseExpiresAndTaskIsRecovered` on a slow runner).
+  `kill()` cancelled in-flight tasks before joining the poller, so a task
+  that was already claimed in the store but not yet registered locally was
+  never cancelled, and the pool shutdown waited forever for its handler.
+  The poller is now joined first. `KillDuringClaimDoesNotHang` reproduces
+  the window deterministically with a fault hook that pauses the poller
+  right after a successful claim; it hung before the fix and passes 20/20
+  after. CI jobs now have timeouts so a hang fails quickly.
 
 - `interruptible_sleep` reported success after cancellation (predicate
   semantics of `condition_variable_any::wait_for`). Caught by
