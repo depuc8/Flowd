@@ -12,7 +12,8 @@
 
 namespace flowd::testing {
 
-// A named factory producing a fresh, empty store. The contract suite in
+// A named factory producing a fresh, empty store, or nullptr when the
+// backend is not available in this environment (the test is then skipped). The contract suite in
 // task_store_contract.cpp runs against every instantiation, so the in-memory
 // and DynamoDB implementations are held to identical semantics.
 struct StoreFactory {
