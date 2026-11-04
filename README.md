@@ -1,5 +1,7 @@
 # Flowd
 
+[![CI](https://github.com/depuc8/Flowd/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/depuc8/Flowd/actions/workflows/ci.yml)
+
 Flowd is a distributed workflow scheduler written in C++20. A workflow is a
 directed acyclic graph of tasks; Flowd runs each task once all of its
 dependencies have succeeded, retries failures with exponential backoff, and
