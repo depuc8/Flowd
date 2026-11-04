@@ -21,7 +21,9 @@ using ::testing::UnorderedElementsAre;
 
 void TaskStoreContract::SetUp() {
     store_ = GetParam().make();
-    ASSERT_NE(store_, nullptr);
+    if (store_ == nullptr) {
+        GTEST_SKIP() << GetParam().name << " is not available in this environment";
+    }
 }
 
 std::string TaskStoreContract::workflow_id(const std::string& suffix) const {
@@ -355,6 +357,9 @@ TEST_P(TaskStoreContract, LargeWorkflowIsDistributedOverShards) {
         EXPECT_GT(non_empty, 1U);
     }
 }
+
+// A binary may legitimately provide no stores (e.g. DynamoDB not configured).
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(TaskStoreContract);
 
 INSTANTIATE_TEST_SUITE_P(Stores, TaskStoreContract, ::testing::ValuesIn(store_factories()),
                          factory_name);

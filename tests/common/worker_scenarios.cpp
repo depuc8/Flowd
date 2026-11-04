@@ -80,6 +80,9 @@ class Scenario : public ::testing::TestWithParam<ScenarioStore> {
 protected:
     void SetUp() override {
         store_ = GetParam().make();
+        if (store_ == nullptr) {
+            GTEST_SKIP() << GetParam().name << " is not available in this environment";
+        }
         scale_ = GetParam().time_scale;
         faulty_ = std::make_unique<FaultyStore>(*store_);
         register_builtin_handlers(registry_);
@@ -403,6 +406,9 @@ TEST_P(Scenario, ThousandsOfTasksAcrossWorkers) {
     ASSERT_EQ(s.status, WorkflowSummary::Status::Succeeded);
     EXPECT_EQ(log_.total(), static_cast<std::size_t>(n));
 }
+
+// A binary may legitimately provide no stores (e.g. DynamoDB not configured).
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(Scenario);
 
 INSTANTIATE_TEST_SUITE_P(Stores, Scenario, ::testing::ValuesIn(scenario_stores()), scenario_name);
 

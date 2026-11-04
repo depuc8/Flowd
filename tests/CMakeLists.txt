@@ -27,3 +27,18 @@ target_link_libraries(flowd_unit_tests PRIVATE
 gtest_discover_tests(flowd_unit_tests
     DISCOVERY_TIMEOUT 60
     PROPERTIES LABELS unit TIMEOUT 300)
+
+if(FLOWD_WITH_DYNAMODB)
+    add_executable(flowd_integration_tests integration/dynamodb_store_test.cpp)
+    target_link_libraries(flowd_integration_tests PRIVATE
+        $<LINK_LIBRARY:WHOLE_ARCHIVE,flowd_test_common> flowd::dynamodb GTest::gtest GTest::gmock)
+    gtest_discover_tests(flowd_integration_tests
+        DISCOVERY_TIMEOUT 60
+        PROPERTIES LABELS integration TIMEOUT 600)
+
+    # End-to-end: real worker processes, one of them killed with SIGKILL.
+    add_test(NAME crash_recovery_multiprocess
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/integration/crash_recovery.sh $<TARGET_FILE:flowd>)
+    set_tests_properties(crash_recovery_multiprocess PROPERTIES
+        LABELS integration TIMEOUT 600 SKIP_RETURN_CODE 77)
+endif()
