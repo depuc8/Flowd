@@ -20,3 +20,11 @@ target_include_directories(flowd_core PUBLIC
 target_link_libraries(flowd_core
     PUBLIC flowd::options Threads::Threads
     PRIVATE nlohmann_json::nlohmann_json)
+
+if(FLOWD_WITH_DYNAMODB)
+    add_library(flowd_dynamodb store/dynamodb_task_store.cpp)
+    add_library(flowd::dynamodb ALIAS flowd_dynamodb)
+    target_link_libraries(flowd_dynamodb
+        PUBLIC flowd::core
+        PRIVATE aws-cpp-sdk-dynamodb aws-cpp-sdk-core)
+endif()
