@@ -4,6 +4,10 @@ add_library(flowd_core
     core/retry_policy.cpp
     core/workflow.cpp
     core/workflow_json.cpp
+    engine/builtin_handlers.cpp
+    engine/dag_executor.cpp
+    engine/handler.cpp
+    engine/timer_service.cpp
 )
 add_library(flowd::core ALIAS flowd_core)
 target_include_directories(flowd_core PUBLIC
