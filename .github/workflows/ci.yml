@@ -1,0 +1,215 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: "1"
+  FLOWD_LOG_LEVEL: error
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.compiler }} / ${{ matrix.build_type }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        build_type: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build g++-14 clang-18
+
+      - name: Select compiler
+        run: |
+          if [ "${{ matrix.compiler }}" = gcc ]; then
+            echo "CC=gcc-14" >> "$GITHUB_ENV"; echo "CXX=g++-14" >> "$GITHUB_ENV"
+          else
+            echo "CC=clang-18" >> "$GITHUB_ENV"; echo "CXX=clang++-18" >> "$GITHUB_ENV"
+          fi
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DFLOWD_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Unit tests
+        run: ctest --test-dir build --label-regex unit --parallel 4 --timeout 300
+
+      - name: Smoke-test the CLI
+        run: |
+          build/apps/flowd run examples/etl.json --log-level warn
+          build/apps/flowd local examples/etl.json --workers 3 --log-level warn
+          # A failing workflow must exit with status 1.
+          set +e
+          build/apps/flowd run examples/failure.json --log-level error
+          status=$?
+          set -e
+          test "$status" -eq 1
+
+      - name: Benchmarks (quick)
+        if: matrix.build_type == 'Release'
+        run: build/benchmarks/flowd_bench --quick
+
+  sanitizers:
+    name: sanitizer / ${{ matrix.sanitizer }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [thread, address+undefined]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build clang-18
+
+      # ThreadSanitizer cannot map its shadow memory with the default ASLR
+      # entropy of recent Ubuntu kernels.
+      - name: Reduce ASLR entropy for TSan
+        if: matrix.sanitizer == 'thread'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
+          -DFLOWD_SANITIZER=${{ matrix.sanitizer }}
+          -DFLOWD_BUILD_BENCHMARKS=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Tests
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --test-dir build --label-regex unit --parallel 2 --timeout 600
+
+      - name: Concurrency stress (repeat)
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: >
+          build/tests/flowd_unit_tests
+          --gtest_filter='LockFreeQueue.*:ThreadPool.*:DagExecutorTest.*:Stores/*'
+          --gtest_repeat=5
+
+  static-analysis:
+    name: static analysis
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build clang-18 clang-tidy-18 cppcheck
+
+      - name: Configure (compile_commands.json)
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18
+
+      # Generated headers of fetched dependencies must exist before clang-tidy runs.
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: clang-tidy
+        run: >
+          run-clang-tidy-18 -p build -quiet -warnings-as-errors='*'
+          "$PWD/(src|apps|benchmarks)/.*\.cpp$"
+
+      - name: cppcheck
+        run: >
+          cppcheck --enable=warning,performance,portability --std=c++20 --inline-suppr
+          --suppress=missingIncludeSystem --error-exitcode=1 -q -I include src apps benchmarks
+
+      - name: Shell scripts
+        run: |
+          shellcheck scripts/*.sh tests/integration/*.sh deploy/ec2/*.sh
+
+  dynamodb-integration:
+    name: DynamoDB integration (DynamoDB Local)
+    runs-on: ubuntu-24.04
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local:latest
+        ports:
+          - 8000:8000
+    env:
+      FLOWD_DYNAMODB_ENDPOINT: http://localhost:8000
+      # Dummy values for DynamoDB Local; no real credentials exist in CI.
+      AWS_ACCESS_KEY_ID: flowdlocal
+      AWS_SECRET_ACCESS_KEY: flowdlocal
+      AWS_REGION: us-east-1
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build g++-14 \
+            libcurl4-openssl-dev libssl-dev zlib1g-dev
+
+      - name: Cache AWS SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: aws-sdk-${{ runner.os }}-gcc14-${{ hashFiles('scripts/bootstrap-deps.sh') }}
+
+      - name: Build AWS SDK for C++ (dynamodb)
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        env:
+          CC: gcc-14
+          CXX: g++-14
+        run: |
+          scripts/bootstrap-deps.sh .deps
+          rm -rf .deps/src
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=gcc-14 -DCMAKE_CXX_COMPILER=g++-14
+          -DCMAKE_PREFIX_PATH=$PWD/.deps -DFLOWD_WITH_DYNAMODB=ON
+          -DFLOWD_WARNINGS_AS_ERRORS=ON -DFLOWD_BUILD_BENCHMARKS=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Wait for DynamoDB Local
+        run: |
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null http://localhost:8000 && exit 0
+            sleep 1
+          done
+          echo "DynamoDB Local is not reachable" && exit 1
+
+      - name: Unit tests
+        run: ctest --test-dir build --label-regex unit --parallel 4 --timeout 300
+
+      - name: Integration tests
+        run: ctest --test-dir build --label-regex integration --timeout 900
