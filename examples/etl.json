@@ -1,0 +1,19 @@
+{
+  "name": "nightly-etl",
+  "defaults": {
+    "retry": {"max_attempts": 3, "initial_backoff_ms": 200, "multiplier": 2.0, "max_backoff_ms": 5000, "jitter": 0.2},
+    "timeout_ms": 60000
+  },
+  "tasks": [
+    {"id": "extract-orders", "handler": "shell", "payload": {"command": "echo extracting orders; sleep 0.2"}},
+    {"id": "extract-customers", "handler": "shell", "payload": {"command": "echo extracting customers; sleep 0.1"}},
+    {"id": "validate", "handler": "fail", "depends_on": ["extract-orders"], "payload": {"times": 1},
+     "retry": {"initial_backoff_ms": 100}},
+    {"id": "transform", "handler": "shell", "depends_on": ["validate", "extract-customers"],
+     "payload": {"command": "echo transform attempt $FLOWD_ATTEMPT key=$FLOWD_IDEMPOTENCY_KEY"}},
+    {"id": "load-warehouse", "handler": "sleep", "depends_on": ["transform"], "payload": {"ms": 150}},
+    {"id": "refresh-dashboards", "handler": "echo", "depends_on": ["load-warehouse"],
+     "payload": {"message": "dashboards refreshed"}},
+    {"id": "notify", "handler": "noop", "depends_on": ["refresh-dashboards"]}
+  ]
+}

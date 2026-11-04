@@ -1,0 +1,11 @@
+{
+  "name": "failure-propagation",
+  "defaults": {"retry": {"max_attempts": 2, "initial_backoff_ms": 50}},
+  "tasks": [
+    {"id": "fetch", "handler": "noop"},
+    {"id": "flaky-api", "handler": "shell", "depends_on": ["fetch"], "payload": {"command": "echo upstream unavailable >&2; exit 7"}},
+    {"id": "process", "handler": "noop", "depends_on": ["flaky-api"]},
+    {"id": "publish", "handler": "noop", "depends_on": ["process"]},
+    {"id": "audit-log", "handler": "echo", "depends_on": ["fetch"], "payload": {"message": "audited"}}
+  ]
+}

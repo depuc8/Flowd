@@ -1,0 +1,11 @@
+add_executable(flowd flowd/main.cpp)
+target_link_libraries(flowd PRIVATE flowd::core)
+target_compile_definitions(flowd PRIVATE FLOWD_VERSION="${PROJECT_VERSION}")
+if(FLOWD_WITH_DYNAMODB)
+    target_link_libraries(flowd PRIVATE flowd::dynamodb)
+    target_compile_definitions(flowd PRIVATE FLOWD_HAS_DYNAMODB=1)
+else()
+    target_compile_definitions(flowd PRIVATE FLOWD_HAS_DYNAMODB=0)
+endif()
+
+install(TARGETS flowd RUNTIME DESTINATION bin)
