@@ -1,6 +1,8 @@
 add_library(flowd_core
+    client/workflow_client.cpp
     concurrency/hazard_pointer.cpp
     concurrency/thread_pool.cpp
+    core/log.cpp
     core/retry_policy.cpp
     core/workflow.cpp
     core/workflow_json.cpp
@@ -8,6 +10,9 @@ add_library(flowd_core
     engine/dag_executor.cpp
     engine/handler.cpp
     engine/timer_service.cpp
+    store/in_memory_task_store.cpp
+    store/task_store.cpp
+    worker/worker.cpp
 )
 add_library(flowd::core ALIAS flowd_core)
 target_include_directories(flowd_core PUBLIC
