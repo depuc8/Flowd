@@ -1,0 +1,40 @@
+[Unit]
+Description=Flowd distributed workflow worker
+Documentation=https://github.com/depuc8/Flowd
+After=network-online.target chronyd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=flowd
+Group=flowd
+EnvironmentFile=/etc/flowd/worker.env
+# Credentials come from the EC2 instance profile through IMDSv2; nothing
+# secret lives in the environment file.
+ExecStart=/usr/local/bin/flowd worker \
+    --table ${FLOWD_TABLE} \
+    --region ${AWS_REGION} \
+    --shards ${FLOWD_SHARDS} \
+    --threads ${FLOWD_THREADS} \
+    --lease-ms ${FLOWD_LEASE_MS} \
+    --heartbeat-ms ${FLOWD_HEARTBEAT_MS} \
+    --drain-timeout-ms ${FLOWD_DRAIN_TIMEOUT_MS} \
+    --log-level ${FLOWD_LOG_LEVEL}
+# SIGTERM triggers a graceful drain; give it the drain timeout plus margin
+# before systemd escalates to SIGKILL (which the lease reaper also handles).
+KillSignal=SIGTERM
+TimeoutStopSec=90
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/flowd
+WorkingDirectory=/var/lib/flowd
+
+[Install]
+WantedBy=multi-user.target

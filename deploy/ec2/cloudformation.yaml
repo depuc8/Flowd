@@ -1,0 +1,211 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Flowd distributed workflow scheduler: DynamoDB task table, least-privilege
+  IAM role and an Auto Scaling group of EC2 worker instances.
+  NOTE: deploying this stack creates billable AWS resources.
+
+Parameters:
+  TableName:
+    Type: String
+    Default: flowd
+    AllowedPattern: "[a-zA-Z0-9_.-]{3,255}"
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Private subnets with outbound access (NAT or VPC endpoints for DynamoDB and S3).
+  InstanceType:
+    Type: String
+    Default: c7g.large
+  ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    Description: Must match the architecture the release tarball was built for.
+  MinWorkers:
+    Type: Number
+    Default: 1
+    MinValue: 0
+  DesiredWorkers:
+    Type: Number
+    Default: 2
+    MinValue: 0
+  MaxWorkers:
+    Type: Number
+    Default: 10
+    MinValue: 1
+  ThreadsPerWorker:
+    Type: Number
+    Default: 8
+    MinValue: 1
+  Shards:
+    Type: Number
+    Default: 8
+    MinValue: 1
+    Description: Index shard count; must match the value used by submitters.
+  ArtifactBucket:
+    Type: String
+    Description: S3 bucket holding the release tarball built by deploy/ec2/build-release.sh.
+  ArtifactKey:
+    Type: String
+    Description: S3 key of the release tarball, e.g. releases/flowd-0.1.0-aarch64.tar.gz.
+
+Resources:
+  TaskTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S}
+        - {AttributeName: sk, AttributeType: S}
+        - {AttributeName: sched_pk, AttributeType: S}
+        - {AttributeName: sched_at, AttributeType: N}
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+        - {AttributeName: sk, KeyType: RANGE}
+      GlobalSecondaryIndexes:
+        - IndexName: sched
+          KeySchema:
+            - {AttributeName: sched_pk, KeyType: HASH}
+            - {AttributeName: sched_at, KeyType: RANGE}
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Shell access through Session Manager instead of SSH keys.
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: flowd-worker
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: TaskTable
+                Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:ConditionCheckItem
+                Resource:
+                  - !GetAtt TaskTable.Arn
+                  - !Sub "${TaskTable.Arn}/index/sched"
+              - Sid: ReleaseArtifact
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${ArtifactBucket}/${ArtifactKey}
+
+  WorkerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref WorkerRole]
+
+  WorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Flowd workers - no inbound access, outbound HTTPS only
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: DynamoDB, S3 and SSM endpoints
+        - IpProtocol: udp
+          FromPort: 123
+          ToPort: 123
+          CidrIp: 169.254.169.123/32
+          Description: Amazon Time Sync Service
+
+  WorkerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref ImageId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt WorkerInstanceProfile.Arn
+        SecurityGroupIds: [!Ref WorkerSecurityGroup]
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 1
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - {Key: Name, Value: flowd-worker}
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -euxo pipefail
+            dnf install -y chrony tar gzip awscli-2 || true
+            systemctl enable --now chronyd
+            mkdir -p /opt/flowd
+            aws s3 cp "s3://${ArtifactBucket}/${ArtifactKey}" /tmp/flowd.tar.gz --region ${AWS::Region}
+            tar -xzf /tmp/flowd.tar.gz -C /opt/flowd
+            cat > /opt/flowd/worker.env <<ENV
+            FLOWD_TABLE=${TaskTable}
+            AWS_REGION=${AWS::Region}
+            FLOWD_SHARDS=${Shards}
+            FLOWD_THREADS=${ThreadsPerWorker}
+            FLOWD_LEASE_MS=30000
+            FLOWD_HEARTBEAT_MS=10000
+            FLOWD_DRAIN_TIMEOUT_MS=60000
+            FLOWD_LOG_LEVEL=info
+            ENV
+            /opt/flowd/install-worker.sh /opt/flowd /opt/flowd/worker.env
+
+  WorkerGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: !Ref MinWorkers
+        MaxBatchSize: 1
+        PauseTime: PT2M
+    Properties:
+      MinSize: !Ref MinWorkers
+      MaxSize: !Ref MaxWorkers
+      DesiredCapacity: !Ref DesiredWorkers
+      VPCZoneIdentifier: !Ref SubnetIds
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WorkerLaunchTemplate
+        Version: !GetAtt WorkerLaunchTemplate.LatestVersionNumber
+      HealthCheckType: EC2
+      Tags:
+        - {Key: Application, Value: flowd, PropagateAtLaunch: true}
+
+  # Scale on CPU; workers are stateless, so scale-in only costs the drain
+  # time of the terminated instance (and, at worst, one lease duration).
+  CpuScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref WorkerGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 60
+
+Outputs:
+  TableName:
+    Value: !Ref TaskTable
+  WorkerRoleArn:
+    Value: !GetAtt WorkerRole.Arn
+  WorkerGroupName:
+    Value: !Ref WorkerGroup
