@@ -110,7 +110,9 @@ public:
                 // `next` is the new dummy. Only the thread that won the CAS
                 // ever touches its value, and the hazard pointer keeps the
                 // node alive while we move it out.
-                std::optional<T> out(std::move(*next->value));
+                // Every node except the dummy carries a value.
+                std::optional<T> out(std::in_place,
+                                     std::move(*next->value)); // NOLINT(bugprone-unchecked-optional-access)
                 next->value.reset();
                 head_guard.reset();
                 next_guard.reset();

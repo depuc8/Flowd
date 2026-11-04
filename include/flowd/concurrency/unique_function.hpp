@@ -102,7 +102,7 @@ private:
         }
     }
 
-    alignas(std::max_align_t) std::byte storage_[kInlineSize];
+    alignas(std::max_align_t) std::byte storage_[kInlineSize]{};
     const Ops* ops_ = nullptr;
 };
 

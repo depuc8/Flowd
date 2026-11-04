@@ -51,6 +51,7 @@ Commands
   local <workflow.json>     Execute a workflow with N in-process workers sharing an
                             in-memory store (exercises the distributed protocol).
   init-table                Create the DynamoDB table and index if missing.
+  delete-table --yes        Delete the DynamoDB table and everything in it.
   submit <workflow.json>    Persist a workflow to DynamoDB for workers to execute.
   worker                    Claim and execute tasks from DynamoDB until SIGINT/SIGTERM.
   status <workflow-id>      Show workflow progress.
@@ -137,7 +138,8 @@ public:
             return it->second;
         }
         if (env != nullptr) {
-            if (const char* v = std::getenv(env); v != nullptr && *v != '\0') {
+            // Only read during argument parsing, before any thread starts.
+            if (const char* v = std::getenv(env); v != nullptr && *v != '\0') { // NOLINT(concurrency-mt-unsafe)
                 return std::string(v);
             }
         }
@@ -208,7 +210,8 @@ void print_tasks(std::vector<TaskRecord> tasks) {
     for (const TaskRecord& t : tasks) {
         std::string err = t.last_error.substr(0, t.last_error.find('\n'));
         if (err.size() > 80) {
-            err = err.substr(0, 77) + "...";
+            err.resize(77);
+            err += "...";
         }
         println("{:<32} {:<10} {:>7}  {:<28} {}", t.task_id, to_string(t.state), t.attempt,
                      t.lease_owner, err);
@@ -264,7 +267,8 @@ int cmd_run(Args& args) {
         std::string text = t.state == TaskState::Succeeded ? t.output : t.error;
         std::ranges::replace(text, '\n', ' ');
         if (text.size() > 80) {
-            text = text.substr(0, 77) + "...";
+            text.resize(77);
+            text += "...";
         }
         println("{:<32} {:<10} {:>7}  {}", dag.task(i).id, to_string(t.state), t.attempts,
                      text);
@@ -338,6 +342,20 @@ int cmd_init_table(Args& args) {
     DynamoDbTaskStore store(o);
     const bool created = store.create_table();
     println("table '{}' {}", o.table_name, created ? "created" : "already exists");
+    return kExitOk;
+}
+
+int cmd_delete_table(Args& args) {
+    DynamoDbOptions o = store_options(args);
+    const bool confirmed = args.flag("yes");
+    args.reject_unknown();
+    if (!confirmed) {
+        throw UsageError("delete-table permanently deletes all workflows; pass --yes to confirm");
+    }
+    AwsSdkSession sdk;
+    DynamoDbTaskStore store(o);
+    store.delete_table();
+    println("table '{}' deleted", o.table_name);
     return kExitOk;
 }
 
@@ -442,7 +460,7 @@ int main(int argc, char** argv) {
     }
     const std::string command = argv[1];
     try {
-        Args args(argc - 2, argv + 2, {"wait", "local", "tasks"});
+        Args args(argc - 2, argv + 2, {"wait", "local", "tasks", "yes"});
         log::Level level = log::Level::Info;
         if (auto l = args.get("log-level", "FLOWD_LOG_LEVEL"); l && !log::parse_level(*l, level)) {
             throw UsageError("invalid log level '" + *l + "'");
@@ -463,6 +481,9 @@ int main(int argc, char** argv) {
         if (command == "init-table") {
             return cmd_init_table(args);
         }
+        if (command == "delete-table") {
+            return cmd_delete_table(args);
+        }
         if (command == "submit") {
             return cmd_submit(args);
         }
@@ -473,7 +494,7 @@ int main(int argc, char** argv) {
             return cmd_status(args);
         }
 #else
-        if (command == "init-table" || command == "submit" || command == "worker" ||
+        if (command == "init-table" || command == "delete-table" || command == "submit" || command == "worker" ||
             command == "status") {
             return no_dynamodb(args);
         }
