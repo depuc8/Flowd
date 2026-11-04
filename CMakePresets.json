@@ -1,6 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -16,61 +20,133 @@
       "name": "debug",
       "inherits": "base",
       "displayName": "Debug",
-      "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"}
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
       "name": "release",
       "inherits": "base",
       "displayName": "Release",
-      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "clang-debug",
+      "inherits": "base",
+      "displayName": "Debug (clang)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_COMPILER": "clang"
+      }
     },
     {
       "name": "tsan",
       "inherits": "base",
       "displayName": "ThreadSanitizer",
-      "cacheVariables": {"CMAKE_BUILD_TYPE": "RelWithDebInfo", "FLOWD_SANITIZER": "thread"}
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "FLOWD_SANITIZER": "thread",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_COMPILER": "clang"
+      }
     },
     {
       "name": "asan",
       "inherits": "base",
       "displayName": "AddressSanitizer + UndefinedBehaviorSanitizer",
-      "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug", "FLOWD_SANITIZER": "address+undefined"}
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "FLOWD_SANITIZER": "address+undefined",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_COMPILER": "clang"
+      }
     },
     {
       "name": "dynamodb",
       "inherits": "base",
       "displayName": "Release with DynamoDB store",
-      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release", "FLOWD_WITH_DYNAMODB": "ON"}
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "FLOWD_WITH_DYNAMODB": "ON"
+      }
     },
     {
       "name": "dynamodb-debug",
       "inherits": "base",
       "displayName": "Debug with DynamoDB store",
-      "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug", "FLOWD_WITH_DYNAMODB": "ON"}
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "FLOWD_WITH_DYNAMODB": "ON"
+      }
     }
   ],
   "buildPresets": [
-    {"name": "debug", "configurePreset": "debug"},
-    {"name": "release", "configurePreset": "release"},
-    {"name": "tsan", "configurePreset": "tsan"},
-    {"name": "asan", "configurePreset": "asan"},
-    {"name": "dynamodb", "configurePreset": "dynamodb"},
-    {"name": "dynamodb-debug", "configurePreset": "dynamodb-debug"}
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "clang-debug",
+      "configurePreset": "clang-debug"
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
+    },
+    {
+      "name": "dynamodb",
+      "configurePreset": "dynamodb"
+    },
+    {
+      "name": "dynamodb-debug",
+      "configurePreset": "dynamodb-debug"
+    }
   ],
   "testPresets": [
     {
       "name": "base",
       "hidden": true,
-      "output": {"outputOnFailure": true},
-      "execution": {"noTestsAction": "error", "stopOnFailure": false}
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": false
+      }
     },
-    {"name": "debug", "inherits": "base", "configurePreset": "debug"},
-    {"name": "release", "inherits": "base", "configurePreset": "release"},
+    {
+      "name": "debug",
+      "inherits": "base",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "configurePreset": "release"
+    },
+    {
+      "name": "clang-debug",
+      "inherits": "base",
+      "configurePreset": "clang-debug"
+    },
     {
       "name": "tsan",
       "inherits": "base",
       "configurePreset": "tsan",
-      "environment": {"TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"}
+      "environment": {
+        "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1"
+      }
     },
     {
       "name": "asan",
@@ -81,6 +157,10 @@
         "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
       }
     },
-    {"name": "dynamodb", "inherits": "base", "configurePreset": "dynamodb"}
+    {
+      "name": "dynamodb",
+      "inherits": "base",
+      "configurePreset": "dynamodb"
+    }
   ]
 }

@@ -1,4 +1,6 @@
 add_library(flowd_core
+    concurrency/hazard_pointer.cpp
+    concurrency/thread_pool.cpp
     core/retry_policy.cpp
     core/workflow.cpp
     core/workflow_json.cpp
