@@ -1,2 +1,8 @@
 add_executable(flowd_bench flowd_bench.cpp)
 target_link_libraries(flowd_bench PRIVATE flowd::core)
+if(FLOWD_WITH_DYNAMODB)
+    target_link_libraries(flowd_bench PRIVATE flowd::dynamodb)
+    target_compile_definitions(flowd_bench PRIVATE FLOWD_BENCH_DYNAMODB=1)
+else()
+    target_compile_definitions(flowd_bench PRIVATE FLOWD_BENCH_DYNAMODB=0)
+endif()

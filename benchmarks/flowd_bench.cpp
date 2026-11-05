@@ -1,7 +1,10 @@
 // Flowd benchmark suite. Prints Markdown tables; every number is measured
 // on the machine running the binary.
 //
-//   flowd_bench [--quick] [--only queue,pool,dag,exec,workers]
+//   flowd_bench [--quick] [--only queue,pool,dag,exec,workers,dynamodb]
+//
+// The dynamodb section needs a build with FLOWD_WITH_DYNAMODB and
+// FLOWD_DYNAMODB_ENDPOINT pointing at DynamoDB Local.
 
 #include "flowd/client/workflow_client.hpp"
 #include "flowd/concurrency/lockfree_queue.hpp"
@@ -11,11 +14,16 @@
 #include "flowd/store/in_memory_task_store.hpp"
 #include "flowd/worker/worker.hpp"
 
+#if FLOWD_BENCH_DYNAMODB
+#include "flowd/store/dynamodb_task_store.hpp"
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <barrier>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <format>
 #include <fstream>
@@ -317,11 +325,75 @@ void bench_workers(bool quick) {
     }
 }
 
+#if FLOWD_BENCH_DYNAMODB
+void bench_dynamodb(bool quick) {
+    // Same protocol over DynamoDB Local. DynamoDB Local runs on one machine
+    // (SQLite-backed), so absolute numbers say little about AWS; the point is
+    // the per-task request cost and how workers share a real network store.
+    const char* endpoint = std::getenv("FLOWD_DYNAMODB_ENDPOINT");
+    if (endpoint == nullptr) {
+        out("\n### Distributed workers over DynamoDB Local\n\nskipped: FLOWD_DYNAMODB_ENDPOINT not set\n");
+        return;
+    }
+    HandlerRegistry registry;
+    register_builtin_handlers(registry);
+    const int n = quick ? 300 : 2'000;
+    out("\n### Distributed workers over DynamoDB Local ({} tasks, endpoint {})\n\n", n, endpoint);
+    out("Each worker: 8 executor threads, max 32 in flight. `submit` = workflow creation; "
+        "`run` = first claim to workflow completion.\n\n");
+    out("| workload | workers | submit (ms) | run (ms) | tasks/s | claim conflicts |\n");
+    out("|---|---:|---:|---:|---:|---:|\n");
+    flowd::AwsSdkSession sdk;
+    for (const std::string shape : {"independent", "layered"}) {
+        const Dag dag(make_shape(shape, n));
+        for (int workers : {1, 2, 4}) {
+            DynamoDbOptions o;
+            o.endpoint = endpoint;
+            o.use_dummy_credentials = true;
+            o.region = "us-east-1";
+            o.table_name = "flowd_bench_" + std::to_string(workers) + "_" + shape;
+            DynamoDbTaskStore store(o);
+            store.delete_table();
+            store.create_table();
+            WorkflowClient client(store);
+            auto start = Clock::now();
+            const std::string id = client.submit(dag.spec(), "bench");
+            const double submit = seconds_since(start);
+            std::vector<std::unique_ptr<Worker>> pool;
+            start = Clock::now();
+            for (int w = 0; w < workers; ++w) {
+                WorkerOptions wo;
+                wo.worker_id = "w" + std::to_string(w);
+                wo.threads = 8;
+                wo.max_in_flight = 32;
+                wo.min_poll_interval = std::chrono::milliseconds{5};
+                wo.max_poll_interval = std::chrono::milliseconds{50};
+                pool.push_back(std::make_unique<Worker>(store, registry, wo));
+                pool.back()->start();
+            }
+            WorkflowSummary s = client.wait(id, std::chrono::minutes{10}, std::chrono::milliseconds{20});
+            const double t = seconds_since(start);
+            std::uint64_t conflicts = 0;
+            for (auto& w : pool) {
+                w->stop();
+                conflicts += w->metrics().claim_conflicts;
+            }
+            store.delete_table();
+            if (s.status != WorkflowSummary::Status::Succeeded) {
+                std::abort();
+            }
+            out("| {} | {} | {:.0f} | {:.0f} | {:.0f} | {} |\n", shape, workers, submit * 1e3, t * 1e3,
+                static_cast<double>(n) / t, conflicts);
+        }
+    }
+}
+#endif
+
 } // namespace
 
 int main(int argc, char** argv) {
     bool quick = false;
-    std::string only = "queue,pool,dag,exec,workers";
+    std::string only = "queue,pool,dag,exec,workers,dynamodb";
     for (int i = 1; i < argc; ++i) {
         std::string_view a = argv[i];
         if (a == "--quick") {
@@ -329,7 +401,7 @@ int main(int argc, char** argv) {
         } else if (a == "--only" && i + 1 < argc) {
             only = argv[++i];
         } else {
-            std::fprintf(stderr, "usage: flowd_bench [--quick] [--only queue,pool,dag,exec,workers]\n");
+            std::fprintf(stderr, "usage: flowd_bench [--quick] [--only queue,pool,dag,exec,workers,dynamodb]\n");
             return 2;
         }
     }
@@ -353,5 +425,10 @@ int main(int argc, char** argv) {
     if (enabled("workers")) {
         bench_workers(quick);
     }
+#if FLOWD_BENCH_DYNAMODB
+    if (enabled("dynamodb")) {
+        bench_dynamodb(quick);
+    }
+#endif
     return 0;
 }
