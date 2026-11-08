@@ -110,15 +110,19 @@ void Worker::kill() {
     poller_.request_stop();
     heartbeat_.request_stop();
     maintenance_.request_stop();
+    // Join the poller before cancelling: a claim that is already in flight
+    // registers its task after the poller observes the stop request, and a
+    // task registered after the cancellation pass would never be told to
+    // stop, leaving pool_->shutdown() waiting on its handler forever.
+    for (std::jthread* t : {&poller_, &heartbeat_, &maintenance_}) {
+        if (t->joinable()) {
+            t->join();
+        }
+    }
     {
         std::lock_guard lock(mutex_);
         for (auto& [key, task] : in_flight_) {
             task->stop.request_stop();
-        }
-    }
-    for (std::jthread* t : {&poller_, &heartbeat_, &maintenance_}) {
-        if (t->joinable()) {
-            t->join();
         }
     }
     pool_->shutdown();

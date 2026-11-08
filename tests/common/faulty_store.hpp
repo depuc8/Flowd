@@ -21,6 +21,9 @@ public:
     };
     // Throwing from the hook simulates a store/network error on commit.
     std::function<void(std::string_view worker)> before_commit = [](std::string_view) {};
+    // Runs after a successful claim, before the worker sees the result
+    // (widens the window between "claimed in the store" and "tracked locally").
+    std::function<void(std::string_view worker)> after_claim = [](std::string_view) {};
     std::atomic<int> renewals_dropped{0};
 
     std::uint32_t shard_count() const override { return inner_.shard_count(); }
@@ -45,7 +48,11 @@ public:
     }
     std::optional<TaskRecord> try_claim(const TaskKey& k, std::string_view w, TimestampMs now,
                                         TimestampMs exp) override {
-        return inner_.try_claim(k, w, now, exp);
+        auto claimed = inner_.try_claim(k, w, now, exp);
+        if (claimed) {
+            after_claim(w);
+        }
+        return claimed;
     }
     bool renew_lease(const TaskKey& k, std::string_view w, std::uint32_t a,
                      TimestampMs exp) override {

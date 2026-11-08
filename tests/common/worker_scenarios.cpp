@@ -13,6 +13,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
+#include <future>
 #include <map>
 #include <mutex>
 #include <random>
@@ -282,6 +284,36 @@ TEST_P(Scenario, CrashedWorkersLeaseExpiresAndTaskIsRecovered) {
     EXPECT_GE(rescuer.metrics().leases_reaped, 1U);
     EXPECT_EQ(log_.runs("work"), (std::vector<std::uint32_t>{1, 2}));
     EXPECT_EQ(get(wf, "next").state, TaskState::Succeeded);
+}
+
+// Regression: kill() used to cancel in-flight tasks before joining the poller.
+// A task claimed in the store but not yet tracked locally then escaped
+// cancellation and kill() hung forever in the pool shutdown, waiting for a
+// handler that was never told to stop.
+TEST_P(Scenario, KillDuringClaimDoesNotHang) {
+    std::promise<void> claimed;
+    std::atomic<bool> signalled{false};
+    faulty_->after_claim = [&](std::string_view) {
+        if (!signalled.exchange(true)) {
+            claimed.set_value();
+        }
+        std::this_thread::sleep_for(100ms); // poller is past the claim, not yet tracking
+    };
+    const std::string wf = submit({task("work", "block", {}, R"({"forever":true})")});
+    Worker& doomed = add_worker(options("doomed", 1), faulty_.get());
+    ASSERT_EQ(claimed.get_future().wait_for(10s * scale_), std::future_status::ready);
+
+    std::promise<void> killed;
+    std::thread killer([&] {
+        doomed.kill();
+        killed.set_value();
+    });
+    if (killed.get_future().wait_for(10s) != std::future_status::ready) {
+        ADD_FAILURE() << "Worker::kill() deadlocked";
+        std::_Exit(1); // a hung kill() cannot be recovered in-process
+    }
+    killer.join();
+    EXPECT_EQ(get(wf, "work").state, TaskState::Running) << "a killed worker must not write";
 }
 
 TEST_P(Scenario, ZombieWorkerCannotCommitAfterLosingItsLease) {
