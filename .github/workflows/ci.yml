@@ -21,6 +21,7 @@ jobs:
   build-and-test:
     name: ${{ matrix.compiler }} / ${{ matrix.build_type }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -72,6 +73,7 @@ jobs:
   sanitizers:
     name: sanitizer / ${{ matrix.sanitizer }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -108,10 +110,14 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build --label-regex unit --parallel 2 --timeout 600
 
+      # A hang here is a bug (deadlock); fail fast instead of burning the
+      # job timeout. Normal runtime is well under two minutes.
       - name: Concurrency stress (repeat)
+        timeout-minutes: 15
         env:
           TSAN_OPTIONS: halt_on_error=1
         run: >
+          timeout --signal=ABRT 600
           build/tests/flowd_unit_tests
           --gtest_filter='LockFreeQueue.*:ThreadPool.*:DagExecutorTest.*:Stores/*'
           --gtest_repeat=5
@@ -119,6 +125,7 @@ jobs:
   static-analysis:
     name: static analysis
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -153,6 +160,8 @@ jobs:
   dynamodb-integration:
     name: DynamoDB integration (DynamoDB Local)
     runs-on: ubuntu-24.04
+    # Includes a from-source AWS SDK build when the cache is cold.
+    timeout-minutes: 90
     services:
       dynamodb:
         image: amazon/dynamodb-local:latest
