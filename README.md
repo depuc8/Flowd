@@ -265,7 +265,7 @@ ctest --preset dynamodb                    # unit + DynamoDB integration + kill 
 
 The store contract suite and the distributed scenarios (crashed worker,
 zombie worker, commit failure, interrupted propagation, crash loops, graceful
-drain, 5,000-task runs) are written once and run against both the in-memory
+drain, kill during a claim, 5,000-task runs) are written once and run against both the in-memory
 store and DynamoDB Local. `tests/integration/crash_recovery.sh` starts three
 real `flowd worker` processes, `SIGKILL`s one while it holds leases, and
 checks that the survivors finish the workflow. Results, including
